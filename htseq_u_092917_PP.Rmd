@@ -1,0 +1,714 @@
+a---
+title: "DEG Analysis 092918"
+output: html_notebook
+---
+Source:
+http://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#htseq
+https://dwheelerau.com/2014/02/17/how-to-use-deseq2-to-analyse-rnaseq-data/
+http://chagall.med.cornell.edu/RNASEQcourse/Intro2RNAseq.pdf
+https://shiring.github.io/rna-seq/deseq2/teaching/2016/09/29/DESeq2-course
+
+
+
+HTSeq count file with union mode will be integrated for DESeq2
+```{r}
+#Obtaining the raw HTSeq Count files
+#vector with path to HTSeq count directory
+directory <- 'D:/Users/ME/Documents/htseq count_union/'
+sampleFiles <- grep('*.tabular',list.files(directory), value = TRUE)
+
+#Creating a vector phenotype informatin for each sample.
+sampleCondition<-c('Wildtype','Wildtype','Wildtype','Knockout','Knockout','Knockout')
+
+#Create sampleTable dataframe that that has count files, their names and phenotype information;
+
+sampleTable <- data.frame(sampleName=c('CTR1','CTR2','CTR3','KO1','KO2','KO3'), fileName=sampleFiles, condition=sampleCondition)
+
+```
+
+```{r}
+## Getting DESeq2 Package
+source("https://bioconductor.org/biocLite.R")
+biocLite("DESeq2")
+library('DESeq2')
+
+##Building DESeqData Set Matrix
+ddsHTSeq<-DESeqDataSetFromHTSeqCount(sampleTable=sampleTable, directory=directory, design= ~ condition)
+
+#Creating conditon level  knockout vs wildtype 
+colData(ddsHTSeq)$condition<-factor(colData(ddsHTSeq)$condition, levels=c('Wildtype','Knockout'))
+
+#Prefilter of Count Data 
+ddSHTSeq_filter <- ddsHTSeq[ rowSums(counts(ddsHTSeq)) > 1, ]
+
+#Perfomring DESeq2 Analysis
+dds<-DESeq(ddSHTSeq_filter)
+
+#Creating Res dataframe from DESeq2 output
+res <- results(dds,contrast=c('condition','Knockout','Wildtype'))
+#Ordering Res by P-adj value
+res<-res[order(res$padj),]
+```
+
+QC of DESeq2 Output:()
+#Making MA Plot:
+The plot (Fig. 2) represents each gene with a dot. The x axis is the average expression over all samples, the y axis the log2 fold change between knockout and wildtype. Genes with an adjusted p value below a threshold (here 0.1, the default) are shown in red.
+```{r}
+plotMA(res,ylim=c(-4,4),main='MA Plot of DESeq2')
+#Note using dds rather than res output
+dev.copy(png,'deseq2_MAplot.png')
+dev.off()
+
+```
+#Making MA plot after lfcshrink is applied.It moderates log2FC of genes with low counts or highly varing counts.
+```{r}
+resLFC <- lfcShrink(dds = dds,contrast=c('condition','Knockout','Wildtype'),res = res )
+summary(resLFC)
+
+plotMA(resLFC, ylim = c(-4, 4), main = 'MA Plot of lfcShrink DESeq2')
+dev.copy(png,'deseq2_MAplot_lfcshrink.png')
+dev.off()
+```
+
+#Making Dispersion Estimate Plot:
+Whether a gene is called significant depends not only on its LFC but also on its within-group variability,which DESeq2 quantifies as the dispersion. The black points are the dispersion estimates for each gene as obtained by considering the information from each gene separately
+```{r}
+plotDispEsts(dds, ylim = c(1e-6, 1e1),main='Dispersion Plot of DESeq2' )
+#Note using dds rather than res because dds is has more information
+dev.copy(png,'deseq2_Dispersionplot.png')
+dev.off()
+```
+
+#Making Histogram of normal P-value:
+```{r}
+hist(res$pvalue, breaks = 20, col = "grey",main ="DEGs with P-values",xlab = "P-value")
+dev.copy(png,'DEG_p_value_histogram.png')
+dev.off()
+```
+#Making Histogram of Adjusted P-value (Benjamini-Hochberg Method)
+```{r}
+hist(res$padj, breaks = 20, col = "grey",main ="DEGs with FDR_P-values",xlab = "Benjamin-Hochberg P-value")
+dev.copy(png,'DEG_adj_P value_histogram.png')
+dev.off()
+```
+#Getting Transformed Value:
+#The function rlog, stands for regularized log, transforming the original count data to the log2 scale by fitting a model with a term for each sample and a prior distribution on the coefficients which is estimated from the data
+```{r}
+rld <- rlog(dds, blind=TRUE)
+```
+#Installing PCA Explorer and annotation to be used
+```{r}
+source("http://bioconductor.org/biocLite.R")
+biocLite("pcaExplorer")
+library(pcaExplorer)
+library(org.Hs.eg.db)
+
+```
+#Runing PCA Explorer instance
+```{r}
+annotation_orgdb <- get_annotation_orgdb(dds = dds,
+                                orgdb_species = "org.Hs.eg.db",
+                                idtype = "ENSEMBL")
+pcaExplorer(dds = dds, rlt = rld,annotation = annotation_orgdb)
+#where where dds is a DESeqDataSet object and rlt is a DESeqTransform object
+#Open in the browser and save different pdf.
+```
+#Checking How different is the MA plot is if prefiltering(count > 1) was not apllied:
+```{r}
+#No filteration of 0 count
+dds_no_filter <-DESeq(ddsHTSeq)
+res_no_filter <- results(dds_no_filter, contrast=c('condition','Knockout','Wildtype'))
+summary(res_no_filter)
+png('~/htseq count_union/DESeq QC/MA plot_no_perfilter.png')
+plotMA(res_no_filter, ylim = c(-4, 4), main = "MA plot_No_Prefilter")
+dev.off()
+#No filter after lfcshrink
+res_no_filter_lfc <- lfcShrink(dds= dds_no_filter, contrast=c('condition','Knockout','Wildtype'),res = res_no_filter )
+summary(res_no_filter_lfc)
+png('~/htseq count_union/DESeq QC/MA plot_no_perfilter_lfcshrink.png')
+plotMA(res_no_filter_lfc, ylim =c(-4, 4), main ="MA_plot_No_Prefileter_lfcshrink")
+dev.off()
+```
+
+
+#Gene Ontology with ClusterProfiler.
+#1) Creat result data frame from res that has entrez,symbol information.
+```{r}
+result <- res
+result$symbol = mapIds(org.Hs.eg.db,
+                     keys=row.names(result), 
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+result$entrez = mapIds(org.Hs.eg.db,
+                     keys=row.names(result), 
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+result$name =   mapIds(org.Hs.eg.db,
+                     keys=row.names(result), 
+                     column="GENENAME",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+#Remove NA values containing rows
+result <- result[complete.cases(result),] 
+```
+#2) Filter result to result2 to P adj value
+
+```{r}
+#Creating Resf dataframe that results filtered at 10% FDR or 0.1 padj.
+resf <- result[result$padj < 0.1,]
+#Further filtering genes with log2FC cut off of 0.1
+resf <- resf [resf$log2FoldChange >=0.1 | resf$log2FoldChange <= -0.1, ]
+
+```
+#3) Download ClusterProfiler Library:
+```{r}
+source("https://bioconductor.org/biocLite.R")
+biocLite("clusterProfiler")
+library(clusterProfiler)
+library(org.Hs.eg.db)
+```
+#4) EnrichGO terms
+```{r}
+# Enrich  Biological Process Ontology
+ego2BP <- enrichGO(gene         = resf$entrez,
+                OrgDb         = org.Hs.eg.db,
+                keytype       = 'ENTREZID',
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+# Remove reduduant terms using Simplify function
+ego2BP_S <- simplify(ego2BP, cutoff=0.7, by="p.adjust", select_fun=min)
+#Ploting the filtered Terms:
+clusterProfiler::dotplot(ego2BP_S, showCategory=25)
+dev.copy(png,'GO_BP_DotPlot.png')
+dev.off()
+barplot(ego2BP_S,showCategory = 10)
+dev.copy(png,'GO_BP_BarPlot.png')
+dev.off()
+#Write CSV:
+write.csv(ego2BP_S, "GO_BP_Terms.csv")
+```
+
+```{r}
+# Enrich  Cellulcar Component Ontology
+ego2CC <- enrichGO(gene         = resf$entrez,
+                OrgDb         = org.Hs.eg.db,
+                keytype       = 'ENTREZID',
+                ont           = "CC",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+# Remove reduduant terms using Simplify function
+ego2CC_S <- simplify(ego2CC, cutoff=0.7, by="p.adjust", select_fun=min)
+#Ploting the filtered Terms:
+clusterProfiler::dotplot(ego2CC_S, showCategory=25)
+dev.copy(png,'GO_CC_DotPlot.png')
+dev.off()
+barplot(ego2CC_S,showCategory = 10)
+dev.copy(png,'GO_CC_BarPlot.png')
+dev.off()
+
+#Write CSV:
+write.csv(ego2CC_S, "GO_CC_Terms.csv")
+```
+
+```{r}
+# Enrich Molecular Function Ontology 
+ego2MF <- enrichGO(gene         = resf$entrez,
+                OrgDb         = org.Hs.eg.db,
+                keytype       = 'ENTREZID',
+                ont           = "MF",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+# Remove reduduant terms using Simplify function
+ego2MF_S <- simplify(ego2MF, cutoff=0.7, by="p.adjust", select_fun=min)
+#Ploting the filtered Terms:(may not work because of huge names!)
+clusterProfiler::dotplot(ego2MF_S, showCategory=25)
+dev.copy(png,'GO_MF_DotPlot.png')
+dev.off()
+barplot(ego2MF_S,showCategory = 10)
+dev.copy(png,'GO_MF_BarPlot.png')
+dev.off()
+
+#Write CSV:
+write.csv(ego2MF_S, "GO_MF_Terms.csv")
+```
+##Gene Set Enrichment Analysis with Cluster Profiler
+```{r}
+#Making GSEA analysis on filtered geneList:
+genelist <- as.vector(resf$log2FoldChange)
+names(genelist) <- resf$entrez
+genelist = sort(genelist, decreasing = TRUE)
+
+##Runing GSEA GO for BP:
+gseBP <- gseGO (geneList   = genelist,
+              OrgDb        = org.Hs.eg.db,
+              ont          = "BP",
+              nPerm        = 1000,
+              minGSSize    = 15,
+              maxGSSize    = 500,
+              pvalueCutoff = 0.05,
+              verbose      = FALSE)
+
+```
+
+```{r}
+#Making GSEA analysis on all
+genelist_a <- as.vector(result$log2FoldChange)
+names(genelist_a) <- result$entrez
+genelist_a = sort(genelist_a, decreasing = TRUE)
+
+##Runing GSEA GO for BP:
+gseBPall <- gseGO (geneList   = genelist_a,
+              OrgDb        = org.Hs.eg.db,
+              ont          = "BP",
+              nPerm        = 1000,
+              minGSSize    = 15,
+              maxGSSize    = 500,
+              pvalueCutoff = 0.05,
+              verbose      = FALSE)
+write.csv(gseBPall, "gsea_BP_all.csv")
+```
+#Enrich Kegg Pathway Analysis with Cluster Profiler
+```{r}
+#Enrich Kegg Pathway Analysis(Overrepresentation)
+ekegg <- enrichKEGG(gene = resf$entrez,     
+                organism ='hsa',
+                pAdjustMethod="BH",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.05)
+clusterProfiler::dotplot(ekegg, showCategory = 25)
+write.csv(ekegg,"kegg_enrich.csv")
+
+#GSEA analysis for filtered Kegg Pathway
+
+gsekegg <-gseKEGG(geneList     = genelist,
+              organism     = 'hsa',
+               nPerm        = 1000,
+               minGSSize    = 15,
+               pvalueCutoff = 0.05,
+               verbose      = FALSE)
+
+#GSEA analysis(for all pathways)
+gsekegg_a <-gseKEGG(geneList     = genelist_a,
+              organism     = 'hsa',
+               nPerm        = 1000,
+               minGSSize    = 15,
+               pvalueCutoff = 0.05,
+               verbose      = FALSE)
+#csv file of results
+write.csv(ekegg, "enrich_Kegg_filtered.csv")
+write.csv(gsekegg,"gsea_Kegg_filtered.csv")
+write.csv(gsekegg_a,"gsea_Kegg_all.csv")
+
+
+
+
+```
+##GAGE analysis:
+```{r}
+source("https://bioconductor.org/biocLite.R")
+biocLite("gage")
+library(gage)
+##Kegg Database:
+#Using Kegg database but filtering for sinaling and metabolic pathways only.
+kg.hsa=kegg.gsets("hsa")
+kegg.gs=kg.hsa$kg.sets[kg.hsa$sigmet.idx]
+
+#Note: will use genelist dataframe for filtered analysis
+#Get list of pathways  where we test for changes in a gene set toward a single direction (all genes up or down regulated).Therfore, we get two list: upregulated pathways and downregulated pathways.
+keggres = gage(genelist, gsets=kegg.gs, same.dir=TRUE)
+lapply(keggres, head)
+write.csv(keggres$greater, "gage_kegg_filtered_upregulated.csv")
+write.csv(keggres$less, "gage_kegg_filtered_downregulated.csv")
+
+##Get list pathways where we test for a changes in a given geneset in both direction at the same time. We get one list of pathways.
+
+keggres2 = gage(genelist, gsets=kegg.gs, same.dir=FALSE)
+lapply(keggres2, head)
+write.csv(keggres2, "gage_kegg_filtered_both direction.csv")
+
+
+```
+
+
+```{r}
+##BAR CHARt for Upregulated Pathways
+library(ggplot2)
+library(data.table)
+p <-data.frame(keggres$greater)
+setDT(p, keep.rownames = TRUE)
+p$kegg = substring(p$rn,10,50)
+p$logp <- -log(p$p.geomean)
+
+#forggPlot:
+f <- ggplot(p[1:20], aes(x = reorder(p$kegg[1:20], p$logp[1:20]), y = p$logp[1:20]))
+f + geom_bar(stat="identity", fill="red")+ xlab("Pathways") + ylab("-logP corrected value") + coord_flip() + ggtitle("KEGG UP-REGULATED PATHWAYS") +   theme_minimal()
+
+```
+
+```{r}
+## BAR CHART for Down Regulated Pathways:
+q <-data.frame(keggres$less)
+library(data.table)
+setDT(q, keep.rownames = TRUE)
+q$kegg = substring(q$rn,10,50)
+q$logp <- -log(q$p.geomean)
+
+#Better alternative to ggbarplot:
+g <- ggplot(q[1:20], aes(x = reorder(q$kegg[1:20], q$logp[1:20]), y = q$logp[1:20]))
+g + geom_bar(stat="identity", fill="blue")+ xlab("Pathways") + ylab("-logP corrected value") + coord_flip() + ggtitle("KEGG DOWNREGULATED PATHWAYS") +   theme_minimal()
+```
+
+```{r}
+##BAR CHARt for Kegg Pathways in two directiontest
+library(ggplot2)
+library(data.table)
+o <-data.frame(keggres2$greater)
+setDT(o, keep.rownames = TRUE)
+o$kegg = substring(o$rn,10,50)
+o$logp <- -log(o$p.geomean)
+
+#for ggPlot:
+h <- ggplot(o[1:20], aes(x = reorder(o$kegg[1:20], o$logp[1:20]), y = o$logp[1:20]))
+h + geom_bar(stat="identity", fill="purple")+ xlab("Pathways") + ylab("-logP corrected value") + coord_flip() + ggtitle("KEGG PATHWAYS Two Direction Test") +   theme_minimal()
+
+```
+
+
+
+##GAGE with GO Database:
+```{r}
+go.human<- go.gsets(species = "human")
+go.bp=go.human$go.sets[go.human$go.subs$BP]
+
+#GO for Biological Process test each direction sepearately
+gobpres <- gage(genelist, gsets = go.bp, same.dir=TRUE)
+lapply(gobpres, head)
+write.csv(gobpres$greater, "D:\\USERS/ME/Documents/htseq count_union/gage_analysis/gage_GO_BP_filtered_upregulated.csv")
+write.csv(gobpres$less,"D:\\USERS/ME/Documents/htseq count_union/gage_analysis/gage_GO_BP_filtered_downregulated.csv")
+
+##GO for Biological Process teat each direction at the same time.
+gobpres2 <- gage(genelist, gsets = go.bp, same.dir=FALSE)
+lapply(gobpres2, head)
+write.csv(gobpres2, "D:\\USERS/ME/Documents/htseq count_union/gage_analysis/gage_GO_filtered_both direction.csv")
+
+```
+##
+```{r}
+#Give entreze ID to each row name:
+
+##convert rld to dataframe named mat
+mat <- assay (rld)[rownames(resf), ]
+gns <- select(org.Hs.eg.db, row.names(mat), "ENTREZID", "ENSEMBL")
+row.names(mat)[match(gns[,1], row.names(mat))] <- gns[,2]
+head(mat)
+str(mat)
+mat <- as.matrix(mat)
+str(mat)
+
+##For Gage Function
+ctr = 1:3
+ko = 4:6
+
+mat.go.bp <- gage(mat, gsets =go.bp, ref = ctr, samp = ko)
+
+mat.go.2d.bp <-gage(mat, gsets=go.bp, ref = ctr, samp = ko, same.dir = FALSE)
+
+##Sort and count significant gene sets
+
+go.1d.sig <- sigGeneSet(mat.go.bp, outname = "092717_go_1d_sig", margin = c(12,16))
+go.2d.sig <-sigGeneSet(mat.go.2d.bp, outname = "092717_go_2d_sig", margin = c(12,16))
+
+go.2d.sig <-sigGeneSet(mat.go.2d.bp, outname = "092717_go_2d_sig", margin = c(12,16))
+
+##IMP
+GO.BP.1d.up<- esset.grp(mat.go.bp$greater,
+                        mat, gsets = go.bp, ref = ctr, samp = ko,
+                        test4up = T, output = T, outname = "ess_GO.BP.up", make.plot = F)
+GO.BP.1d.down<- esset.grp(mat.go.bp$less,
+mat, gsets = go.bp , ref = ctr, samp = ko,
+test4up = T, output = T, outname = "ess_GO.BP.down", make.plot = F)
+
+GO.BP.2d <- esset.grp(mat.go.2d.bp$greater,
+mat, gsets = go.bp , ref = ctr, samp = ko,
+test4up = T, output = T, outname = "ess_GO.BP.2d", make.plot = F)
+
+names(GO.BP.1d.up)
+
+names(GO.BP.1d.up)
+head(GO.BP.1d.up$essentialSets,5)
+head(GO.BP.1d.up$setGroups,5)
+head(GO.BP.1d.up$coreGeneSets,5)
+
+#Creating Heatmap for one of the intresting GO TERM genes
+library("genefilter")
+library("gplots")
+core <- GO.BP.1d.up$coreGeneSets
+rmat <- mat[core$`GO:0007005 mitochondrion organization`, ]
+gns <- select(org.Hs.eg.db, row.names(rmat), "SYMBOL", "ENTREZID")
+
+hm <- heatmap.2(rmat, scale="row",
+trace="none", dendrogram="column", main = 'GO:007005 Mitochondrion Organization Essential Genes',
+col = colorRampPalette( rev(brewer.pal(9, "RdBu")) )(255))
+dev.copy(png,'mitochondria_heatmap.png')
+dev.off()
+
+```
+
+
+
+
+
+
+##Impact Analysis
+http://www.nature.com/cr/journal/v22/n3/full/cr2011149a.html?foxtrotcallback=true
+1) Pathway Express (rontotols bioconductor)
+2) SPIA (bioconductor) part of GRAPHIte
+3) 
+3) http://ophid.utoronto.ca/pathdip/
+
+```{r}
+#Pathay Express Analysis
+## try http:// if https:// URLs are not supported
+source("https://bioconductor.org/biocLite.R")
+biocLite("ROntoTools")
+require(ROntoTools)
+require(graph)
+kpg <- keggPathwayGraphs("hsa", updateCache = TRUE, verbose = TRUE)
+head(names(kpg))
+kpg[["path:hsa04110"]]# inspecting a pathway
+#adding weight to edges of the pathways in kpg frame:
+kpg <- setEdgeWeights(kpg, edgeTypeAttr = "subtype",
+                      edgeWeightByType = 
+                      list(activation = 1, inhibition = -1,
+                      expression = 1, repression = -1),
+                      defaultWeight = 0)
+#creating data frame with names of kegg pathways
+kpn <- keggPathwayNames("hsa")
+
+
+```
+
+```{r}
+#Adding hsa: prefix to entrez id for compatibility
+resf$hsa_entrez <- paste("hsa", resf$entrez, sep =":")
+PEgene <- as.vector(resf$log2FoldChange)
+names(PEgene) <- resf$hsa_entrez
+
+#Using the same genelist dataframe but need genelist_pv
+PEgene_pv <- as.vector(resf$padj)
+names(PEgene_pv) <- resf$hsa_entrez
+
+#Creating ref dataframe with all genes of RNAseq
+result$hsa_entrez <- paste("hsa", result$entrez, sep =":")
+ref <- as.character(result$hsa_entrez)
+head(ref)
+
+#Setting the node weights for significance of each gene:
+kpg <- setNodeWeights(kpg, weights = alphaMLG(PEgene_pv), defaultWeight = 1)
+head(nodeWeights(kpg[["path:hsa04110"]]))
+
+#Pathway analysis and results summary
+peRes <- pe(PEgene, graphs = kpg, ref = ref, nboot = 1000, verbose = FALSE)
+head(summary(peRes))
+head(summary(peRes, pathNames = kpn, totalAcc = FALSE, totalPert = FALSE,pAcc = FALSE, pORA = FALSE, comb.pv = NULL, order.by = "pPert"))
+write.csv(summary(peRes, pathNames = kpn, totalAcc = FALSE, totalPert = FALSE,pAcc = FALSE, pORA = FALSE, comb.pv = NULL, order.by = "pPert"), "D://USERS/Me/Documents/htseq count_union/PE_analysis.csv")
+#Visualizing Pathways:
+plot(peRes)
+#Visualing pathway propagation
+plot(peRes@pathways[["path:hsa05014"]], type = "boot", title(main = "path:hsa05014 ALS"))#the bootstrap simulations of the perturbation accumulation 
+plot(peRes@pathways[["path:hsa05014"]], type = "two.way", title(main = "path:hsa05014 ALS"))#perturbation accumulation versus the measured expression
+p <- peRes@pathways[["path:hsa05014"]]
+g <- layoutGraph(p@map, layoutType = "dot")
+graphRenderInfo(g) <- list(fixedsize = FALSE)
+edgeRenderInfo(g) <- peEdgeRenderInfo(p)
+nodeRenderInfo(g) <- peNodeRenderInfo(p)
+renderGraph(g)
+#since the default render graph shows gene id as Entrez, it is harder to understand. So, I used pathview library to view the affect pathways.
+library(pathwview)
+pathview::pathview(gene.data   = genelist,
+                    pathway.id = "hsa05014",
+                      species  = "hsa",
+                        limit  = list(gene=1, cpd=1))
+pathview::pathview(gene.data = genelist,
+                   pathway.id = "hsa04360",
+                   species ="hsa",
+                   limit = list(gene=1, cpd=1))
+plot(peRes@pathways[["path:hsa04360"]], type = "boot", title(main = "path:hsa04360 Axon Guidance"))
+
+
+```
+
+
+
+Graphite Web Tool
+https://graphiteweb.bio.unipd.it/
+```{r}
+#Preparing filtered gene list table
+write.table(data.frame(names(genelist),genelist),"D://USERS/Me/Documents/htseq count_union/genelist.txt", row.names=FALSE, sep='\t')
+#Preparing all gene list table
+write.table(data.frame(names(genelist_a),genelist_a),"D://USERS/Me/Documents/htseq count_union/genelist_all.txt", row.names=FALSE, sep='\t')
+
+## Creating data.matrix tabl from rld
+resmat <- data.frame(assay(dds))
+
+resmat$entrez = mapIds(org.Hs.eg.db,                         keys=row.names(resmat), 
+                         column="ENTREZID",
+                         keytype="ENSEMBL",
+                        multiVals="first")
+resmat <- resmat[complete.cases(resmat),] 
+resmat2 <- resmat[!duplicated(resmat$entrez),]
+row.names(resmat2) <- resmat2$entrez
+write.table(resmat2[,1:6], "D://USERS/Me/Documents/htseq count_union/rld_data_matrix2.txt",sep = '\t')
+
+ df[!duplicated(df[c("RAW.PVAL","allrl")]),]
+
+
+
+```
+
+##Extracting Enriched Genes from eKegg Dataframe:
+Pathway hsa04360: Axon Guidance
+```{r}
+#creating dataframe with entrez ID of slected pathways
+axon$ID <- unlist(strsplit(ekegg['hsa04360','geneID'], '/'))
+#convert entrez to gene symbol using org.Hs.eg.db
+axon_s <- select(org.Hs.eg.db, axon, "SYMBOL", "ENTREZID")
+#write csv file
+write.csv(axon_s, "axon_guidance_genes.csv", quote = F)
+#Putting them in EnrichR and Cytoscape iRegulon plugin but result do not make sense.
+
+```
+##Found new tools DEBrowser and Enrichment Browser
+```{r}
+#Preparing data objects for Enrichment Browser
+expr <- counts(ddSHTSeq_filter)
+expr <- expr[rowMeans(expr)> 10, ] 
+air.eset <- new("ExpressionSet", exprs=expr, annotation="hsa")
+dim(air.eset)
+exprs(air.eset)[1:4,1:6]
+# pDATA needs to be binday CHCHD10 knockout = 1, CTR= 0
+pData(air.eset)$GROUP <- c('0','0','0','1','1','1')
+table(pData(air.eset)$GROUP)
+air.eset <- de.ana(air.eset, de.method="DESeq")
+#one could use edgeR, limma or DESeq
+head(fData(air.eset), n=4)
+
+#ID Mapping
+id.types("hsa")
+head(featureNames(air.eset))
+air.eset <- map.ids(air.eset, from="ENSEMBL", to="ENTREZID")
+ head(featureNames(air.eset))
+ 
+ #Ontology
+ kegg.gs <- get.kegg.genesets("hsa")
+ go.gs <- get.go.genesets(org="hsa", onto="BP", mode="GO.db")
+ 
+ #Gene Set Base Methods
+ sbea.methods()
+ 
+ #Focusing on ORA and GSEA for Kegg and GO BP
+ 
+#ORA 
+ora.kegg.res <- sbea(method="ora", eset=air.eset, gs=kegg.gs, perm=0, alpha=0.05)
+gs.ranking(ora.kegg.res)
+ora.GO.res <- sbea(method="ora", eset=air.eset, gs=go.gs, perm=0, alpha=0.05)
+gs.ranking(ora.GO.res)
+
+#View Result in HtML
+ea.browse(ora.kegg.res, nr.show = 10)# the non-normalized expression is shown in heatmap.
+
+#GSEA
+gsea.kegg.res <- sbea(method="gsea", eset=air.eset, gs=kegg.gs, perm=100, alpha=0.05)
+gs.ranking(gsea.kegg.res)
+gsea.GO.res <- sbea(method="gsea", eset=air.eset, gs=go.gs, perm=100, alpha=0.05)
+gs.ranking(gsea.GO.res)
+
+ #Network Base Enrichment Methods
+ nbea.methods()
+ #Preparing  kegg pathways
+ pwys <- download.kegg.pathways("hsa")
+ #Making gene regulatory network
+ hsa.grn <- compile.grn.from.kegg(pwys)
+ ##ggea
+ggea.kegg.res <- nbea(method="ggea", eset=air.eset, gs=kegg.gs, grn=hsa.grn)
+gs.ranking(ggea.kegg.res)
+
+  #ploting ggEA out
+par(mfrow=c(1,2))
+ggea.graph(gs=kegg.gs[["hsa04512_ECM-receptor_interaction"]],grn=hsa.grn, eset=air.eset)
+ggea.graph.legend()
+
+##spia
+spia.kegg.res <- nbea(method="spia", eset=air.eset, gs=kegg.gs, grn=hsa.grn)
+gs.ranking(spia.kegg.res)
+
+#GANPA did not work
+ganpa.kegg.res <- nbea(method="ganpa", eset = air.eset, gs=kegg.gs, grn = hsa.grn)
+
+#combine ora and network based for kegg
+res.list <- list(ora.kegg.res,gsea.kegg.res,ggea.kegg.res,spia.kegg.res)
+comb.res <- comb.ea.results(res.list)
+ea.browse(comb.res, graph.view=hsa.grn, nr.show=5)
+```
+#UTR using QuaternaryProd did not work on Thinkpad
+
+```{r}
+#Strindb
+#Making a network for top 50 DEGs orded by Padj:
+#Getting Protein interaction()
+library(STRINGdb)
+```
+
+```{r}
+source("https://bioconductor.org/biocLite.R")a
+biocLite("STRINGdb")
+library(STRINGdb)
+species <- get_STRING_species(version="10", species_name=NULL)
+species[which(grepl("^Homo sapiens",species$official_name)),]
+
+# create a new STRING_db object
+string_db <- STRINGdb$new(version="10",species=9606)
+
+#Using Resf create String Network
+str.expr1 <- resf[,c('symbol','log2FoldChange','padj')]
+str.expr1 <- str.expr1[complete.cases("symbol"), ]
+str.expr1 <- str.expr1[!duplicated("symbol"), ]
+str.expr1 <- str.expr1[order(str.expr1[, 'padj']), ]
+#row.names(str.expr1) <- str.expr1$symbol
+# map to STRING ids
+expr1_mapped = string_db$map( str.expr1, "symbol", removeUnmappedRows = TRUE )
+
+
+# get the STRING_id for the top 50 genes
+hits = expr1_mapped$STRING_id[1:100]  
+
+# plot the STRING network png 
+#string_db$plot_network( hits ) #(plot without colors)
+# filter by p-value and add a color column 
+# (i.e. green down-regulated gened and red for up-regulated genes)
+expr1_pval05 = string_db$add_diff_exp_color(subset(expr1_mapped, padj<0.05),                                                       logFcColStr="log2FoldChange" )    
+
+# post payload information to the STRING server
+payload_id = string_db$post_payload( expr1_pval05$STRING_id,
+                                     colors=expr1_pval05$color )
+
+# display a STRING network png with the "halo"
+string_db$plot_network( hits, payload_id=payload_id )
+
+```
+
+
+
+
+
+
+
+
+
+
