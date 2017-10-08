@@ -1,6 +1,5 @@
-a---
-title: "DEG Analysis 092918"
-output: html_notebook
+---
+R scripts for DEGs and Gene Ontology
 ---
 Source:
 http://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#htseq
