@@ -1,5 +1,5 @@
 ----
- "DEG Analysis to Gene Ontology and Pathway Analysis
+ "RNAseq Analysis from Differentialy Expressed Genes to Gene Ontology and Pathway Analysis
 ---
 Sources:
 http://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#htseq
