@@ -2,13 +2,16 @@
 Comparison of DESEq2 and EdgeR and voom-limma to identify dysregulated genes
 
 ---
-References:
+Source codes:
 http://bioinf.wehi.edu.au/edgeR/F1000Research2016/edgeRQL.pdf
 https://github.com/mistrm82/msu_ngs2015/blob/master/hands-on.Rmd
+http://www.r-graph-gallery.com/14-venn-diagramm/
 
+References:
 http://bioconductor.org/packages/release/bioc/html/limma.html
 https://bioconductor.org/packages/release/bioc/html/DESeq2.html
 http://bioconductor.org/packages/release/bioc/html/edgeR.html
+
 
 ```{r}
 #Installing Packages
