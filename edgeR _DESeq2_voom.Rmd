@@ -1,0 +1,190 @@
+---
+title: "DESEq2 and EdgeR and voom-limma combined"
+
+---
+References:
+http://bioinf.wehi.edu.au/edgeR/F1000Research2016/edgeRQL.pdf
+
+```{r}
+#Installing Packages
+
+source("https://bioconductor.org/biocLite.R")
+biocLite("DESeq2")
+biocLite("edgeR")
+biocLite("Biobase")
+```
+
+#Create EdgeR dataobject form HTseq Count:
+```{r}
+#Obtaining the raw HTSeq Count files
+#vector with path to HTSeq count directory
+directory <- '~/Documents/Count files for DESeq2'
+sampleFiles <- grep('*.tabular',list.files(directory), value = TRUE)
+
+#Creating a vector phenotype informatin for each sample.
+sampleCondition<-c('Wildtype','Wildtype','Wildtype','Knockout','Knockout','Knockout')
+
+#Create sampleTable dataframe that that has count files, their names and phenotype information;
+
+sampleTable <- data.frame(sampleName=c('CTR1','CTR2','CTR3','KO1','KO2','KO3'), fileName=sampleFiles, condition=sampleCondition)
+
+
+##Building DESeqData Set Matrix
+library('DESeq2')
+ddsHTSeq<-DESeqDataSetFromHTSeqCount(sampleTable=sampleTable, directory=directory, design= ~ condition)
+
+#Creating conditon level  knockout vs wildtype 
+colData(ddsHTSeq)$condition<-factor(colData(ddsHTSeq)$condition, levels=c('Wildtype','Knockout'))
+
+#Prefilter of Count Data 
+ddSHTSeq_filter <- ddsHTSeq[ rowSums(counts(ddsHTSeq)) > 1, ]
+
+#Perfomring DESeq2 Analysis
+dds<-DESeq(ddSHTSeq_filter)
+
+#Creating Res dataframe from DESeq2 output
+deseq2_res <- results(dds,contrast=c('condition','Knockout','Wildtype'))
+```
+
+```{r}
+
+#Creating DGEList Data class for edgeR from DESEq2 object (its count funciton)
+y <- edgeR::DGEList(counts = counts(ddSHTSeq_filter), group = sampleCondition)
+
+
+#Filter counts less 0.5 per Million with :
+#Here the cutoff of 0.5 for the CPM has been chosen because it is roughly equal to 10/L where L is the minimum library size in millions.   The library sizes here are 20–25 million.   We used a round value of 0.5 just for simplicity; the exact value is not important because the downstream differential expression analysis is not sensitive to the small changes in this parameter. 
+
+keep <- rowSums(cpm(y) > 0.5) >= 3
+table(keep)
+ y <- y[keep, , keep.lib.sizes= FALSE]
+ #keep.lib.size is for recomputing library size
+ 
+##Analysis###
+#1:Calculate Library Normalizing Factor
+y <- calcNormFactors(y) 
+head(y$samples)
+#2:Create Design Matrix
+design <- model.matrix(~ 0 + y$samples$group)
+colnames(design) <- levels(y$samples$group)
+design
+#3:Estimate Dispersion
+y <- estimateDisp(y, design, robust = TRUE)
+#plotBCV plot shows square-root dispersion, also known as biological coefficient of variation (BCV)
+plotBCV(y)
+
+#4: Using Generalized Linear Model Fitting
+fit <- glmQLFit(y, design, robust=TRUE)
+
+#Differential Expresson (Quasi_Likelihood ratio test)
+edgeRcontrast <- makeContrasts(Knockout - Wildtype, levels = design)
+lrt <- glmQLFTest(fit, contrast = edgeRcontrast)
+topTags(lrt) # summary of result
+
+```
+##Limm-Vroom Transformation:
+```{r}
+#Voom transformation using the design matrix from EdgeR
+
+nf <- calcNormFactors(counts(ddSHTSeq_filter))
+v <- voom(counts(ddSHTSeq_filter), design, lib.size = colSums(counts(ddSHTSeq_filter))*nf, normalize.method = "quantile", plot = TRUE)
+
+## Limma pipline
+vfit <- lmFit(v, design)
+vfit <- contrasts.fit(vfit, contrasts=edgeRcontrast)
+efit <- eBayes(vfit)
+plotSA(efit, main="Final model: Mean−variance trend")
+
+```
+
+
+#Comparing EdgeR vs DESeq2 vs limmavroom
+```{r}
+
+p.threshold = 0.05
+#Access Resuts table for EdgeR
+edgeR_result <- lrt$table
+sig.edgeR <-decideTestsDGE(lrt, adjust.method = "BH", p.value = p.threshold)
+genes.edgeR <-row.names(edgeR_result)[which(sig.edgeR != 0)]
+
+#Access Result table for DESeq2
+deseq2_res$threshold <- as.logical (deseq2_res$padj < p.threshold)
+genes.deseq2 <-row.names(deseq2_res)[which(deseq2_res$threshold)]
+
+#Acces Result table for Limmavroom
+vroom_results <- topTable(efit, coef = 1, adjust = "BH", number = nrow(counts(ddSHTSeq_filter)) )
+vroom_results$threshold <- as.logical (vroom_results$adj.P.Val < p.threshold)
+genes.vroom <-row.names(vroom_results)[which(vroom_results$threshold)]
+
+
+#Get gplots
+library(gplots)
+venn(list(edgeR=genes.edgeR, DESeq2 = genes.deseq2, voom = genes.vroom))
+
+#Alternative Approch using venn.diagram:
+
+
+venn.diagram(
+c3 <- list(genes.edgeR, genes.deseq2, genes.vroom),
+category.names = c("edgeR" , "DESeq2 " , "voom"),
+filename = '#14_venn_diagramm.tiff',
+        output = TRUE ,
+        imagetype="tiff" ,
+        height = 800 , 
+        width = 800 , 
+        resolution = 500,
+        compression = "lzw",
+        lwd = 2,
+        lty = 'blank',
+        fill = c('red', 'blue', 'green'),
+        cex = 1,
+        fontface = "plain",
+        fontfamily = "sans",
+        cat.cex = 0.6,
+        cat.fontface = "bold",
+        cat.default.pos = "outer",
+        cat.pos = c(-27, 27, 135),
+        cat.dist = c(0.055, 0.055, 0.085),
+        cat.fontfamily = "sans",
+        rotation = 1
+        )
+```
+##Exporting Table of DEGs that are common between three Analysis
+```{r}
+commonDEGsNames <- intersect (intersect(genes.edgeR, genes.deseq2),  genes.vroom)
+commonDEGs <- deseq2_res[commonDEGsNames, ]
+
+#Adding Annotation to this common genes
+library(org.Hs.eg.db)
+commonDEGs$symbol <- mapIds(org.Hs.eg.db, rownames(commonDEGs), keytype="ENSEMBL", column="SYMBOL")
+commonDEGs$entrez <- mapIds(org.Hs.eg.db, rownames(commonDEGs), keytype="ENSEMBL", column="ENTREZID")
+commonDEGs$genename <- mapIds(org.Hs.eg.db, rownames(commonDEGs), keytype="ENSEMBL", column="GENENAME")
+ 
+commonDEGs <- commonDEGs[order(commonDEGs$padj),]
+
+write.table(commonDEGs, file = '~/Documents/commonDEGs_0.05.tsv', quote = FALSE, col.names = NA, sep = '\t')
+
+#Exporting EdgeR table
+
+edgeR_result$symbol <- mapIds(org.Hs.eg.db, rownames(edgeR_result), keytype="ENSEMBL", column="SYMBOL")
+edgeR_result$entrez <- mapIds(org.Hs.eg.db, rownames(edgeR_result), keytype="ENSEMBL", column="ENTREZID")
+edgeR_result$genename <- mapIds(org.Hs.eg.db, rownames(edgeR_result), keytype="ENSEMBL", column="GENENAME")
+write.table(edgeR_result, file = '~/Documents/edgeR_result_DEGs.tsv', quote = FALSE, col.names = NA, sep = '\t')
+#Exporting DESeq2 table
+
+deseq2_res$symbol <- mapIds(org.Hs.eg.db, rownames(deseq2_res), keytype="ENSEMBL", column="SYMBOL")
+deseq2_res$entrez <- mapIds(org.Hs.eg.db, rownames(deseq2_res), keytype="ENSEMBL", column="ENTREZID")
+deseq2_res$genename <- mapIds(org.Hs.eg.db, rownames(deseq2_res), keytype="ENSEMBL", column="GENENAME")
+
+write.table(deseq2_res, file = '~/Documents/deseq2_res_DEGs.tsv', quote = FALSE, col.names = NA, sep = '\t')
+
+#Exporting limma-vroom table
+
+vroom_results$symbol <- mapIds(org.Hs.eg.db, rownames(vroom_results), keytype="ENSEMBL", column="SYMBOL")
+vroom_results$entrez <- mapIds(org.Hs.eg.db, rownames(vroom_results), keytype="ENSEMBL", column="ENTREZID")
+vroom_results$genename <- mapIds(org.Hs.eg.db, rownames(vroom_results), keytype="ENSEMBL", column="GENENAME")
+
+write.table(vroom_results, file = '~/Documents/vroom_results_DEGs.tsv', quote = FALSE, col.names = NA, sep = '\t')
+
+```
+
