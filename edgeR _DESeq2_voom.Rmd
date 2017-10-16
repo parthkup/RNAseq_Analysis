@@ -1,5 +1,5 @@
 ---
-title: "DESEq2 and EdgeR and voom-limma combined"
+Comparison of DESEq2 and EdgeR and voom-limma to identify dysregulated genes
 
 ---
 References:
